@@ -90,6 +90,18 @@ if (!salida.length) throw new Error('No se recibio ningun PDF');
 return salida;
 '''
 
+err_code = r'''
+// Error tecnico en una factura: se registra en el log y las demas siguen.
+let archivo = null;
+try { archivo = $('Normalizar archivo').item.json.archivo; } catch (e) {}
+let datos = {};
+try { datos = $('Parsear respuesta IA').item.json; } catch (e) {}
+const err = $json.error;
+const detalle = typeof err === 'string' ? err : (err && (err.message || err.description)) || JSON.stringify($json).slice(0, 300);
+return { json: { fecha: $now.toISO(), archivo, numero_factura: datos.numero_factura || null, ruc: datos.ruc || null,
+  estado: 'error', paso: $prevNode.name, detalle, mensaje: `Error tecnico en ${$prevNode.name}: no se registra ni se avisa a Compras (reintentar).` } };
+'''
+
 log_code = r'''
 // Una linea JSON por factura (trazabilidad / auditoria)
 const lineas = $input.all().map(i => JSON.stringify(i.json)).join('\n') + '\n';
@@ -143,12 +155,18 @@ nodes = [
  {"parameters": {"operation": "write", "fileName": "={{ '/logs/facturas-' + $now.toFormat('yyyy-MM-dd') + '.jsonl' }}", "dataPropertyName": "data", "options": {"append": True}},
   "name": "5. Guardar log (JSONL)", "type": "n8n-nodes-base.readWriteFile", "typeVersion": 1, "position": [2860, 300]},
 ]
+nodes.append({"parameters": {"jsCode": err_code, "mode": "runOnceForEachItem"}, "name": "Resultado: error tecnico", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [2420, 640]})
+CON_ERROR = ["Leer texto del PDF", "2. Extraer datos con Claude", "Parsear respuesta IA", "ERP: consultar proveedor", "ERP: consultar OC", "Validar reglas de negocio", "3a. Registrar en ERP", "Resultado: registrada", "3b. Avisar a Compras (correo)"]
+for n in nodes:
+    if n["name"] in CON_ERROR:
+        n["onError"] = "continueErrorOutput"
 order = [n["name"] for n in nodes]
 def link(a, b, out=0): return (a, b, out)
 links = [link(order[i], order[i+1]) for i in range(9)] + [
   ("¿Factura valida?", "3a. Registrar en ERP", 0), ("3a. Registrar en ERP", "Resultado: registrada", 0),
   ("¿Factura valida?", "3b. Avisar a Compras (correo)", 1), ("3b. Avisar a Compras (correo)", "Resultado: rechazada", 0),
   ("Resultado: registrada", "4. Armar log", 0), ("Resultado: rechazada", "4. Armar log", 0), ("4. Armar log", "5. Guardar log (JSONL)", 0)]
+links += [(n, "Resultado: error tecnico", 1) for n in CON_ERROR] + [("Resultado: error tecnico", "4. Armar log", 0)]
 conns = {}
 for a, b, o in links:
     main = conns.setdefault(a, {"main": []})["main"]

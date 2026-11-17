@@ -54,7 +54,8 @@
       "position": [
         440,
         300
-      ]
+      ],
+      "onError": "continueErrorOutput"
     },
     {
       "parameters": {
@@ -105,7 +106,8 @@
       },
       "retryOnFail": true,
       "maxTries": 5,
-      "waitBetweenTries": 3000
+      "waitBetweenTries": 3000,
+      "onError": "continueErrorOutput"
     },
     {
       "parameters": {
@@ -118,7 +120,8 @@
       "position": [
         1100,
         300
-      ]
+      ],
+      "onError": "continueErrorOutput"
     },
     {
       "parameters": {
@@ -150,7 +153,8 @@
       },
       "retryOnFail": true,
       "maxTries": 3,
-      "waitBetweenTries": 2000
+      "waitBetweenTries": 2000,
+      "onError": "continueErrorOutput"
     },
     {
       "parameters": {
@@ -182,7 +186,8 @@
       },
       "retryOnFail": true,
       "maxTries": 3,
-      "waitBetweenTries": 2000
+      "waitBetweenTries": 2000,
+      "onError": "continueErrorOutput"
     },
     {
       "parameters": {
@@ -195,7 +200,8 @@
       "position": [
         1760,
         300
-      ]
+      ],
+      "onError": "continueErrorOutput"
     },
     {
       "parameters": {
@@ -262,7 +268,8 @@
           "id": "erpBearerXs00001",
           "name": "ERP Diosmar (Bearer)"
         }
-      }
+      },
+      "onError": "continueErrorOutput"
     },
     {
       "parameters": {
@@ -275,7 +282,8 @@
       "position": [
         2420,
         180
-      ]
+      ],
+      "onError": "continueErrorOutput"
     },
     {
       "parameters": {
@@ -298,7 +306,8 @@
           "id": "smtpPruebaXs0001",
           "name": "SMTP avisos"
         }
-      }
+      },
+      "onError": "continueErrorOutput"
     },
     {
       "parameters": {
@@ -341,6 +350,19 @@
         2860,
         300
       ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\n// Error tecnico en una factura: se registra en el log y las demas siguen.\nlet archivo = null;\ntry { archivo = $('Normalizar archivo').item.json.archivo; } catch (e) {}\nlet datos = {};\ntry { datos = $('Parsear respuesta IA').item.json; } catch (e) {}\nconst err = $json.error;\nconst detalle = typeof err === 'string' ? err : (err && (err.message || err.description)) || JSON.stringify($json).slice(0, 300);\nreturn { json: { fecha: $now.toISO(), archivo, numero_factura: datos.numero_factura || null, ruc: datos.ruc || null,\n  estado: 'error', paso: $prevNode.name, detalle, mensaje: `Error tecnico en ${$prevNode.name}: no se registra ni se avisa a Compras (reintentar).` } };\n",
+        "mode": "runOnceForEachItem"
+      },
+      "name": "Resultado: error tecnico",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2420,
+        640
+      ]
     }
   ],
   "connections": {
@@ -374,6 +396,13 @@
             "type": "main",
             "index": 0
           }
+        ],
+        [
+          {
+            "node": "Resultado: error tecnico",
+            "type": "main",
+            "index": 0
+          }
         ]
       ]
     },
@@ -396,6 +425,13 @@
             "type": "main",
             "index": 0
           }
+        ],
+        [
+          {
+            "node": "Resultado: error tecnico",
+            "type": "main",
+            "index": 0
+          }
         ]
       ]
     },
@@ -404,6 +440,13 @@
         [
           {
             "node": "ERP: consultar proveedor",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Resultado: error tecnico",
             "type": "main",
             "index": 0
           }
@@ -418,6 +461,13 @@
             "type": "main",
             "index": 0
           }
+        ],
+        [
+          {
+            "node": "Resultado: error tecnico",
+            "type": "main",
+            "index": 0
+          }
         ]
       ]
     },
@@ -429,6 +479,13 @@
             "type": "main",
             "index": 0
           }
+        ],
+        [
+          {
+            "node": "Resultado: error tecnico",
+            "type": "main",
+            "index": 0
+          }
         ]
       ]
     },
@@ -437,6 +494,13 @@
         [
           {
             "node": "¿Factura valida?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Resultado: error tecnico",
             "type": "main",
             "index": 0
           }
@@ -469,6 +533,13 @@
             "type": "main",
             "index": 0
           }
+        ],
+        [
+          {
+            "node": "Resultado: error tecnico",
+            "type": "main",
+            "index": 0
+          }
         ]
       ]
     },
@@ -480,6 +551,13 @@
             "type": "main",
             "index": 0
           }
+        ],
+        [
+          {
+            "node": "Resultado: error tecnico",
+            "type": "main",
+            "index": 0
+          }
         ]
       ]
     },
@@ -488,6 +566,13 @@
         [
           {
             "node": "4. Armar log",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Resultado: error tecnico",
             "type": "main",
             "index": 0
           }
@@ -510,6 +595,17 @@
         [
           {
             "node": "5. Guardar log (JSONL)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resultado: error tecnico": {
+      "main": [
+        [
+          {
+            "node": "4. Armar log",
             "type": "main",
             "index": 0
           }
