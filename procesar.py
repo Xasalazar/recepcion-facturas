@@ -60,6 +60,9 @@ CAMPOS_FACTURA = (
 )
 HEADERS = {"Authorization": f"Bearer {ERP_TOKEN}"}
 MUESTRAS = ("F1.pdf", "F2.pdf", "F3.pdf")
+CARPETA_SALIDAS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "salidas")
+ARCHIVO_BITACORA = os.path.join(CARPETA_SALIDAS, "bitacora.log")
+ARCHIVO_JSONL = os.path.join(CARPETA_SALIDAS, "bitacora.jsonl")
 _cliente_ia = None
 
 
@@ -98,6 +101,49 @@ def validar_config() -> None:
         print("Faltan variables de entorno: " + ", ".join(faltantes))
         print("Copia .env.example a .env y completa los valores.")
         sys.exit(1)
+
+
+def log_paso(pasos: list, mensaje: str) -> None:
+    marca = datetime.now().strftime("%H:%M:%S")
+    linea = f"{marca}  {mensaje}"
+    print(linea, flush=True)
+    os.makedirs(CARPETA_SALIDAS, exist_ok=True)
+    with open(ARCHIVO_BITACORA, "a", encoding="utf-8") as f:
+        f.write(datetime.now().strftime("%Y-%m-%d ") + linea + "\n")
+    pasos.append(linea)
+
+
+def guardar_resultado(resultado: dict) -> str:
+    os.makedirs(CARPETA_SALIDAS, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    base = os.path.splitext(os.path.basename(str(resultado.get("factura", "factura"))))[0]
+    ruta = os.path.join(CARPETA_SALIDAS, f"{stamp}-{base}.json")
+    with open(ruta, "w", encoding="utf-8") as f:
+        json.dump(resultado, f, ensure_ascii=False, indent=2)
+    with open(ARCHIVO_JSONL, "a", encoding="utf-8") as f:
+        f.write(
+            json.dumps(
+                {"cuando": datetime.now().isoformat(timespec="seconds"), **resultado},
+                ensure_ascii=False,
+            )
+            + "\n"
+        )
+    return ruta
+
+
+def leer_historial(limite: int = 40) -> list:
+    if not os.path.isfile(ARCHIVO_JSONL):
+        return []
+    with open(ARCHIVO_JSONL, encoding="utf-8") as f:
+        lineas = [ln for ln in f.read().splitlines() if ln.strip()]
+    items = []
+    for ln in lineas[-limite:]:
+        try:
+            items.append(json.loads(ln))
+        except json.JSONDecodeError:
+            continue
+    items.reverse()
+    return items
 
 
 # ---------- 1. Leer PDF ----------
@@ -161,7 +207,10 @@ def extraer_con_ia(texto: str, reintentos: int = 5) -> dict:
             msg = str(e).lower()
             if any(c in msg for c in ("overloaded", "529", "503", "429", "rate")):
                 espera = min(2 ** intento, 20)
-                print(f"     (modelo ocupado, reintento {intento}/{reintentos} en {espera}s...)")
+                print(
+                    f"     (modelo ocupado, reintento {intento}/{reintentos} en {espera}s...)",
+                    flush=True,
+                )
                 time.sleep(espera)
                 continue
             raise
@@ -211,17 +260,24 @@ def extraer_por_texto(texto: str) -> dict:
     }
 
 
-def extraer_datos(texto: str) -> tuple:
+def extraer_datos(texto: str, log=None) -> tuple:
     """Intenta IA; si el modelo falla o el JSON sale incompleto, usa extracción por texto."""
+    def _log(mensaje: str) -> None:
+        if log:
+            log(mensaje)
+        else:
+            print(mensaje, flush=True)
+
     try:
         datos = extraer_con_ia(texto)
         if datos_completos(datos):
+            _log("Extracción con IA correcta.")
             return datos, "ia"
-        print("  IA devolvió datos incompletos; se usa extracción por texto.")
+        _log("IA devolvió datos incompletos; se usa extracción por texto.")
     except (KeyboardInterrupt, SystemExit):
         raise
     except Exception as e:
-        print(f"  IA no disponible ({e}); se usa extracción por texto.")
+        _log(f"IA no disponible ({e}); se usa extracción por texto.")
     return extraer_por_texto(texto), "texto"
 
 
@@ -239,8 +295,12 @@ def consultar_erp(recurso: str, identificador: str) -> requests.Response:
     return r
 
 
-def validar(datos: dict) -> list:
+def validar(datos: dict, log=None) -> list:
     """Devuelve lista de motivos de negocio (vacía = todo OK). Errores técnicos se lanzan."""
+    def _log(mensaje: str) -> None:
+        if log:
+            log(mensaje)
+
     errores = []
 
     ruc = str(datos.get("ruc", "")).strip()
@@ -253,7 +313,9 @@ def validar(datos: dict) -> list:
         errores.append(f"El número de factura '{numero}' no tiene el formato ddd-ddd-ddddddddd.")
 
     if RE_RUC.match(ruc):
+        _log(f"Consultando proveedor {ruc} en el ERP.")
         r = consultar_erp("proveedores", ruc)
+        _log(f"ERP GET /proveedores/{ruc} -> HTTP {r.status_code}.")
         if r.status_code == 404:
             errores.append(f"El proveedor con RUC {ruc} no está registrado en el sistema.")
         else:
@@ -263,11 +325,15 @@ def validar(datos: dict) -> list:
                     f"El proveedor {prov.get('razon_social', ruc)} no está activo "
                     f"(estado: {prov.get('estado')})."
                 )
+            else:
+                _log(f"Proveedor activo: {prov.get('razon_social', ruc)}.")
 
     if not oc:
         errores.append("La factura no indica orden de compra.")
     else:
+        _log(f"Consultando orden de compra {oc} en el ERP.")
         r = consultar_erp("ordenes-compra", oc)
+        _log(f"ERP GET /ordenes-compra/{oc} -> HTTP {r.status_code}.")
         if r.status_code == 404:
             errores.append(f"La orden de compra {oc} no existe en el sistema.")
         else:
@@ -277,6 +343,8 @@ def validar(datos: dict) -> list:
                     f"La orden de compra {oc} pertenece a otro proveedor "
                     f"(RUC {orden['ruc_proveedor']}), no al emisor de la factura."
                 )
+            else:
+                _log(f"La orden de compra {oc} coincide con el emisor.")
 
     return errores
 
@@ -298,10 +366,12 @@ def registrar(datos: dict) -> dict:
         raise ErrorTecnico(f"No se pudo registrar en el ERP (red/timeout): {e}") from e
     if r.status_code == 409:
         # Ya estaba registrada: idempotencia, no es un error de negocio.
-        return {"id": "ya_registrada", "duplicada": True}
+        return {"id": "ya_registrada", "duplicada": True, "http": 409}
     if not r.ok:
         raise ErrorTecnico(f"No se pudo registrar en el ERP (HTTP {r.status_code}).")
-    return r.json()
+    cuerpo = r.json()
+    cuerpo["http"] = r.status_code
+    return cuerpo
 
 
 # ---------- 5b. Enviar correo de aviso ----------
@@ -329,51 +399,62 @@ def enviar_aviso(numero: str, ruc: str, motivos: list):
 
 # ---------- Orquestación ----------
 def procesar_factura(ruta: str) -> dict:
+    pasos = []
+
+    def log(mensaje: str) -> None:
+        log_paso(pasos, mensaje)
+
+    def cerrar(resultado: dict) -> dict:
+        resultado["pasos"] = pasos
+        resultado["archivo_salida"] = os.path.relpath(guardar_resultado(resultado))
+        return resultado
+
     nombre = os.path.basename(ruta)
-    print(f"\n=== Procesando {nombre} ===")
+    log(f"Procesando {nombre}")
     texto = leer_pdf(ruta)
+    log(f"PDF leído ({len(texto)} caracteres).")
     if not texto.strip():
         raise ErrorTecnico("El PDF no tiene texto extraíble.")
 
-    datos, origen = extraer_datos(texto)
-    print(f"  Extraído ({origen}):", json.dumps(datos, ensure_ascii=False))
+    datos, origen = extraer_datos(texto, log=log)
+    log("Datos extraídos: " + json.dumps(datos, ensure_ascii=False))
 
     numero = str(datos.get("numero_factura", "?"))
     ruc = str(datos.get("ruc", "?"))
     extra = {"datos": datos, "origen": origen, "ruc": ruc}
 
     try:
-        errores = validar(datos)
+        errores = validar(datos, log=log)
     except ErrorTecnico as e:
-        print(f"  ⚠️  Error técnico (no se registra, no se avisa a Compras): {e}")
-        return {"factura": nombre, "numero": numero, "estado": "error", "detalle": str(e), **extra}
+        log(f"Error técnico (no se registra, no se avisa a Compras): {e}")
+        return cerrar({"factura": nombre, "numero": numero, "estado": "error", "detalle": str(e), **extra})
 
     if errores:
-        print("  ❌ RECHAZADA:")
         for e in errores:
-            print("     -", e)
+            log(f"Rechazo: {e}")
         enviar_aviso(numero, ruc, errores)
-        print(f"  ✉️  Aviso enviado a {MAIL_TO}")
-        return {
+        log(f"Aviso enviado a {MAIL_TO}.")
+        return cerrar({
             "factura": nombre,
             "numero": numero,
             "estado": "rechazada",
             "motivos": errores,
             "aviso": True,
             **extra,
-        }
+        })
 
+    log("Validación de negocio correcta. Registrando en el ERP.")
     try:
         res = registrar(datos)
     except ErrorTecnico as e:
-        print(f"  ⚠️  Error técnico (no se registra, no se avisa a Compras): {e}")
-        return {"factura": nombre, "numero": numero, "estado": "error", "detalle": str(e), **extra}
+        log(f"Error técnico (no se registra, no se avisa a Compras): {e}")
+        return cerrar({"factura": nombre, "numero": numero, "estado": "error", "detalle": str(e), **extra})
 
     if res.get("duplicada"):
-        print("  ✅ YA REGISTRADA (idempotencia: no se duplica)")
-        return {"factura": nombre, "numero": numero, "estado": "ya_registrada", **extra}
-    print(f"  ✅ REGISTRADA (id {res.get('id')})")
-    return {"factura": nombre, "numero": numero, "estado": "registrada", "id": res.get("id"), **extra}
+        log("ERP HTTP 409: ya estaba registrada (idempotencia, no se duplica).")
+        return cerrar({"factura": nombre, "numero": numero, "estado": "ya_registrada", **extra})
+    log(f"ERP POST /facturas -> HTTP {res.get('http', 201)}. Registrada id {res.get('id')}.")
+    return cerrar({"factura": nombre, "numero": numero, "estado": "registrada", "id": res.get("id"), **extra})
 
 
 def main():

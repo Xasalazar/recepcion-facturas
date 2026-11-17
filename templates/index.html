@@ -70,7 +70,7 @@
       border: 1px solid #b7c9cf;
       box-shadow: inset 0 8px 0 #c4d5db;
     }
-    .bandeja h2 {
+    .bandeja h2, .libro h2, .bitacora h2 {
       margin: 4px 0 12px;
       font-size: 1.05rem;
       font-weight: 600;
@@ -120,11 +120,6 @@
     .primario { background: var(--teal); color: #fff; }
     .primario:hover:not(:disabled) { background: var(--teal-oscuro); }
     .secundario { background: var(--mar); color: #fff; }
-    .libro h2 {
-      margin: 0 0 12px;
-      font-size: 1.05rem;
-      color: var(--mar);
-    }
     .vacio {
       color: var(--suave);
       padding: 28px 8px;
@@ -191,10 +186,35 @@
       background: #fff3e0;
       color: #5c3d0c;
     }
-    .origen {
-      margin-top: 8px;
-      font-size: 0.8rem;
-      color: var(--suave);
+    .origen { margin-top: 8px; font-size: 0.8rem; color: var(--suave); }
+    .pasos {
+      margin: 10px 0 0;
+      font-family: "IBM Plex Mono", ui-monospace, monospace;
+      font-size: 0.75rem;
+      color: #3d545b;
+      background: #eef4f6;
+      padding: 8px 10px;
+      white-space: pre-wrap;
+      max-height: 160px;
+      overflow: auto;
+    }
+    .bitacora {
+      margin-top: 28px;
+      background: var(--mar);
+      color: #d7e6ea;
+      padding: 16px 18px 18px;
+    }
+    .bitacora h2 { color: #eef6f8; }
+    .bitacora p { margin: 0 0 10px; color: #9fb8bf; font-size: 0.88rem; }
+    .bitacora pre {
+      margin: 0;
+      font-family: "IBM Plex Mono", ui-monospace, monospace;
+      font-size: 0.78rem;
+      line-height: 1.45;
+      white-space: pre-wrap;
+      min-height: 4.5rem;
+      max-height: 240px;
+      overflow: auto;
     }
     button:focus-visible,
     .soltar:focus-visible {
@@ -234,6 +254,12 @@
         <div id="resultados"></div>
       </section>
     </div>
+
+    <section class="bitacora" aria-labelledby="titulo-bitacora">
+      <h2 id="titulo-bitacora">Bitácora</h2>
+      <p>Cada paso se escribe también en <code>salidas/bitacora.log</code> y un JSON por factura en <code>salidas/</code>.</p>
+      <pre id="bitacora">Esperando facturas…</pre>
+    </section>
   </div>
 
   <script>
@@ -245,7 +271,9 @@
     const btnMuestras = document.getElementById("muestras");
     const resultados = document.getElementById("resultados");
     const vacio = document.getElementById("vacio");
+    const bitacoraEl = document.getElementById("bitacora");
     let cola = [];
+    let lineasBitacora = [];
 
     const etiquetas = {
       registrada: "Registrada",
@@ -284,25 +312,30 @@
       agregarArchivos(e.dataTransfer.files);
     });
 
-    function tarjeta(id, nombre) {
+    function anotar(texto) {
+      lineasBitacora.push(texto);
+      bitacoraEl.textContent = lineasBitacora.join("\n");
+      bitacoraEl.scrollTop = bitacoraEl.scrollHeight;
+    }
+
+    function tarjeta(nombre) {
       vacio.hidden = true;
       const art = document.createElement("article");
       art.className = "ficha procesando";
-      art.id = id;
       art.innerHTML = `
         <span class="sello procesando">${etiquetas.procesando}</span>
         <h3>${nombre}</h3>
-        <p class="origen">Extrayendo y validando contra el ERP</p>`;
+        <p class="origen">Extrayendo y validando contra el ERP…</p>`;
       resultados.prepend(art);
       return art;
     }
 
     function dinero(n) {
-      if (n === undefined || n === null || n === "") return "";
+      if (n === undefined || n === null || n === "") return "—";
       return Number(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     }
 
-    function pintarResultado(art, data) {
+    function pintarResultado(art, data, prependBitacora) {
       const estado = data.estado || "error";
       const d = data.datos || {};
       art.className = "ficha " + estado;
@@ -313,23 +346,30 @@
           ? "Extraído con el modelo de IA."
           : "";
       const motivos = (data.motivos || []).map((m) => `<li>${m}</li>`).join("");
+      const pasos = (data.pasos || []).join("\n");
       art.innerHTML = `
         <span class="sello ${estado}">${sello}</span>
-        <h3>${data.factura || "factura.pdf"} · ${data.numero || ""}</h3>
+        <h3>${data.factura || "factura.pdf"} · ${data.numero || "—"}</h3>
         <dl class="datos">
-          <div><dt>RUC emisor</dt><dd>${data.ruc || d.ruc || ""}</dd></div>
-          <div><dt>Orden de compra</dt><dd>${d.orden_compra || ""}</dd></div>
-          <div><dt>Fecha</dt><dd>${d.fecha_emision || ""}</dd></div>
+          <div><dt>RUC emisor</dt><dd>${data.ruc || d.ruc || "—"}</dd></div>
+          <div><dt>Orden de compra</dt><dd>${d.orden_compra || "—"}</dd></div>
+          <div><dt>Fecha</dt><dd>${d.fecha_emision || "—"}</dd></div>
           <div><dt>Total</dt><dd>${dinero(d.total)}</dd></div>
         </dl>
         ${motivos ? `<div class="motivos"><p>No se registró. Motivo para Compras:</p><ul>${motivos}</ul></div>` : ""}
         ${data.detalle ? `<p class="detalle-error">${data.detalle}</p>` : ""}
-        ${origen ? `<p class="origen">${origen}${data.aviso ? " Se envió aviso por correo." : ""}</p>` : ""}
+        ${origen ? `<p class="origen">${origen}${data.aviso ? " Se envió aviso por correo." : ""}${data.archivo_salida ? " Guardado en " + data.archivo_salida + "." : ""}</p>` : ""}
+        ${pasos ? `<pre class="pasos">${pasos}</pre>` : ""}
       `;
+      if (prependBitacora !== false) {
+        (data.pasos || []).forEach(anotar);
+        if (data.detalle && !(data.pasos || []).length) anotar(data.detalle);
+      }
     }
 
     async function pedir(url, opciones, nombre) {
-      const art = tarjeta("f-" + Date.now() + "-" + Math.random().toString(16).slice(2), nombre);
+      const art = tarjeta(nombre);
+      anotar("→ " + nombre);
       try {
         const res = await fetch(url, opciones);
         const data = await res.json();
@@ -365,6 +405,18 @@
       btnMuestras.disabled = false;
       pintarCola();
     });
+
+    fetch("/api/historial")
+      .then((r) => r.json())
+      .then((items) => {
+        if (!items.length) return;
+        const cronologico = items.slice().reverse();
+        cronologico.forEach((data) => {
+          pintarResultado(tarjeta(data.factura || "factura.pdf"), data, false);
+        });
+        cronologico.forEach((data) => (data.pasos || []).forEach(anotar));
+      })
+      .catch(() => {});
   </script>
 </body>
 </html>

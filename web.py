@@ -7,10 +7,16 @@ import tempfile
 from flask import Flask, jsonify, render_template, request
 from werkzeug.utils import secure_filename
 
-from procesar import MUESTRAS, faltantes_config, procesar_factura
+from procesar import (
+    MUESTRAS,
+    faltantes_config,
+    leer_historial,
+    procesar_factura,
+)
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 12 * 1024 * 1024
+app.json.ensure_ascii = False
 CARPETA_MUESTRAS = os.path.join(os.path.dirname(__file__), "facturas")
 
 
@@ -21,6 +27,18 @@ def inicio():
         faltantes=faltantes_config(),
         muestras=MUESTRAS,
     )
+
+
+def _ejecutar(ruta: str, nombre: str) -> dict:
+    try:
+        return procesar_factura(ruta)
+    except Exception as e:
+        return {"factura": nombre, "estado": "error", "detalle": str(e), "pasos": []}
+
+
+@app.get("/api/historial")
+def api_historial():
+    return jsonify(leer_historial())
 
 
 @app.post("/api/procesar")
@@ -35,14 +53,7 @@ def api_procesar():
     with tempfile.TemporaryDirectory(prefix="factura-") as tmp:
         ruta = os.path.join(tmp, nombre)
         archivo.save(ruta)
-        try:
-            resultado = procesar_factura(ruta)
-        except Exception as e:
-            resultado = {
-                "factura": nombre,
-                "estado": "error",
-                "detalle": str(e),
-            }
+        resultado = _ejecutar(ruta, nombre)
     return jsonify(resultado)
 
 
@@ -52,12 +63,8 @@ def api_muestra(nombre):
         return jsonify({"error": "Factura de muestra no reconocida."}), 404
     ruta = os.path.join(CARPETA_MUESTRAS, nombre)
     if not os.path.isfile(ruta):
-        return jsonify({"error": f"No está {nombre} en facturas/."}), 404
-    try:
-        resultado = procesar_factura(ruta)
-    except Exception as e:
-        resultado = {"factura": nombre, "estado": "error", "detalle": str(e)}
-    return jsonify(resultado)
+        return jsonify({"error": f"No esta {nombre} en facturas/."}), 404
+    return jsonify(_ejecutar(ruta, nombre))
 
 
 if __name__ == "__main__":

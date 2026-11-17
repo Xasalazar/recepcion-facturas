@@ -63,6 +63,8 @@ Luego abre [http://127.0.0.1:5055](http://127.0.0.1:5055).
 
 - **Procesar F1, F2 y F3** usa los PDF de `facturas/`.
 - **Suelte los PDF aquí** acepta uno o varios archivos nuevos (pruebas adicionales).
+- La **bitácora** de la página muestra cada paso (IA, ERP, correo). Lo mismo queda en
+  `salidas/bitacora.log` y un JSON por factura.
 
 ### Script (terminal)
 
@@ -98,17 +100,3 @@ MAIL_TO=destinatario@dominio.com
 - **Trazabilidad**: cada corrida deja un resumen JSON con lo registrado/rechazado/error.
 - **Separación de responsabilidades**: lectura, extracción IA, extracción por texto,
   validación, registro y notificación son funciones independientes.
-
-## Versión n8n (visual)
-
-El mismo flujo existe en n8n: `n8n/recepcion-facturas.workflow.json` (lo genera `n8n/build_workflow.py`).
-
-1. Levantar n8n: `docker run -d --name n8n -p 5678:5678 -v n8n_data:/home/node/.n8n n8nio/n8n`
-2. Importar el workflow: menú **Import from file** en n8n, o `n8n import:workflow --input=...`.
-3. Crear las 3 credenciales en n8n (los secretos NO están en el JSON):
-   - **ERP Diosmar (Bearer)**: tipo *Bearer Auth*, token del ERP.
-   - **Anthropic API key**: tipo *Header Auth*, nombre `x-api-key`, valor la API key.
-   - **SMTP avisos**: tipo *SMTP* (buzón de prueba o el SMTP de producción).
-4. Activar y abrir el formulario: `http://localhost:5678/form/recepcion-facturas-form`, subir el PDF.
-
-Nodos: Formulario (PDF) → Leer texto → Claude (reintentos x5) → ERP proveedor → ERP OC → Validar reglas → ¿válida? → Registrar (409 = idempotente) / Correo a Compras.
