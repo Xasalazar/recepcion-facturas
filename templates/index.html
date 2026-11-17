@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Recepción de facturas</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --mar: #143d4a;
+      --espuma: #eef3f5;
+      --papel: #fbfcfd;
+      --bandeja: #d5e3e8;
+      --linea: #8aa3ab;
+      --teal: #1b7a86;
+      --teal-oscuro: #145e68;
+      --ok: #1f6b4a;
+      --rechazo: #9b1d2e;
+      --tecnico: #8a5a12;
+      --texto: #1c2a31;
+      --suave: #5b7178;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; }
+    body {
+      font-family: "IBM Plex Sans", system-ui, sans-serif;
+      color: var(--texto);
+      background:
+        linear-gradient(180deg, #cfdde2 0 48px, transparent 48px),
+        var(--espuma);
+      letter-spacing: 0.01em;
+    }
+    .marco {
+      max-width: 1120px;
+      margin: 0 auto;
+      padding: 28px 20px 48px;
+    }
+    header h1 {
+      margin: 0 0 6px;
+      font-size: 1.85rem;
+      font-weight: 600;
+      color: var(--mar);
+    }
+    header p {
+      margin: 0;
+      color: var(--suave);
+      max-width: 42rem;
+    }
+    .aviso-config {
+      margin: 18px 0 0;
+      padding: 12px 14px;
+      border-left: 4px solid var(--tecnico);
+      background: #fff6e8;
+    }
+    .tablero {
+      display: grid;
+      grid-template-columns: minmax(280px, 0.9fr) minmax(320px, 1.2fr);
+      gap: 22px;
+      margin-top: 28px;
+      align-items: start;
+    }
+    @media (max-width: 840px) {
+      .tablero { grid-template-columns: 1fr; }
+    }
+    .bandeja {
+      background: var(--bandeja);
+      padding: 18px;
+      border: 1px solid #b7c9cf;
+      box-shadow: inset 0 8px 0 #c4d5db;
+    }
+    .bandeja h2 {
+      margin: 4px 0 12px;
+      font-size: 1.05rem;
+      font-weight: 600;
+      color: var(--mar);
+    }
+    .soltar {
+      background: var(--papel);
+      border: 1.5px dashed var(--linea);
+      min-height: 180px;
+      padding: 22px 16px;
+      text-align: center;
+      cursor: pointer;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 8px;
+    }
+    .soltar.sobre { border-color: var(--teal); background: #f3fafb; }
+    .soltar strong { color: var(--mar); font-weight: 600; }
+    .soltar span { color: var(--suave); font-size: 0.92rem; }
+    .cola {
+      list-style: none;
+      margin: 12px 0 0;
+      padding: 0;
+      font-family: "IBM Plex Mono", ui-monospace, monospace;
+      font-size: 0.82rem;
+    }
+    .cola li {
+      padding: 6px 0;
+      border-bottom: 1px dotted #9fb3b9;
+    }
+    .acciones {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 16px;
+    }
+    button {
+      font-family: inherit;
+      font-size: 0.95rem;
+      font-weight: 600;
+      border: 0;
+      padding: 10px 14px;
+      cursor: pointer;
+    }
+    button:disabled { opacity: 0.45; cursor: not-allowed; }
+    .primario { background: var(--teal); color: #fff; }
+    .primario:hover:not(:disabled) { background: var(--teal-oscuro); }
+    .secundario { background: var(--mar); color: #fff; }
+    .libro h2 {
+      margin: 0 0 12px;
+      font-size: 1.05rem;
+      color: var(--mar);
+    }
+    .vacio {
+      color: var(--suave);
+      padding: 28px 8px;
+      border-top: 1px solid #c5d4d9;
+    }
+    article.ficha {
+      background: var(--papel);
+      border: 1px solid #c5d4d9;
+      border-left: 6px solid var(--linea);
+      padding: 14px 16px 16px;
+      margin-bottom: 12px;
+      position: relative;
+    }
+    article.ficha.registrada,
+    article.ficha.ya_registrada { border-left-color: var(--ok); }
+    article.ficha.rechazada { border-left-color: var(--rechazo); }
+    article.ficha.error { border-left-color: var(--tecnico); }
+    article.ficha.procesando { border-left-color: var(--teal); }
+    .sello {
+      position: absolute;
+      top: 10px;
+      right: 12px;
+      font-weight: 600;
+      font-size: 0.78rem;
+      letter-spacing: 0.04em;
+      padding: 4px 8px;
+      border: 2px solid currentColor;
+      transform: rotate(-7deg);
+      background: rgba(255,255,255,0.85);
+    }
+    .sello.registrada, .sello.ya_registrada { color: var(--ok); }
+    .sello.rechazada { color: var(--rechazo); }
+    .sello.error { color: var(--tecnico); }
+    .sello.procesando { color: var(--teal); transform: none; border-style: dashed; }
+    .ficha h3 {
+      margin: 0 28px 8px 0;
+      font-family: "IBM Plex Mono", ui-monospace, monospace;
+      font-size: 0.95rem;
+      font-weight: 600;
+    }
+    .datos {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 6px 16px;
+      font-size: 0.9rem;
+    }
+    .datos dt { color: var(--suave); }
+    .datos dd {
+      margin: 0;
+      font-family: "IBM Plex Mono", ui-monospace, monospace;
+      font-size: 0.86rem;
+    }
+    .motivos {
+      margin: 10px 0 0;
+      padding: 8px 10px;
+      background: #f8ecee;
+      color: #6b1520;
+    }
+    .motivos p { margin: 0 0 6px; font-weight: 600; }
+    .motivos ul { margin: 0; padding-left: 1.1rem; }
+    .detalle-error {
+      margin: 10px 0 0;
+      padding: 8px 10px;
+      background: #fff3e0;
+      color: #5c3d0c;
+    }
+    .origen {
+      margin-top: 8px;
+      font-size: 0.8rem;
+      color: var(--suave);
+    }
+    button:focus-visible,
+    .soltar:focus-visible {
+      outline: 3px solid #4aa8b3;
+      outline-offset: 2px;
+    }
+  </style>
+</head>
+<body>
+  <div class="marco">
+    <header>
+      <h1>Recepción de facturas</h1>
+      <p>Suelte los PDF en la bandeja. Cada archivo se extrae, se valida contra el ERP y se registra o se avisa a Compras, sin cambiar código.</p>
+      {% if faltantes %}
+      <p class="aviso-config">Faltan variables de entorno: {{ faltantes | join(", ") }}. Complete el <code>.env</code> antes de procesar.</p>
+      {% endif %}
+    </header>
+
+    <div class="tablero">
+      <section class="bandeja" aria-labelledby="titulo-bandeja">
+        <h2 id="titulo-bandeja">Bandeja de entrada</h2>
+        <div class="soltar" id="zona" tabindex="0" role="button" aria-label="Suelte PDF o pulse para elegir archivos">
+          <strong>Suelte los PDF aquí</strong>
+          <span>o pulse para elegir archivos. Puede subir varios a la vez.</span>
+        </div>
+        <input id="archivos" type="file" accept="application/pdf,.pdf" multiple hidden>
+        <ul class="cola" id="cola"></ul>
+        <div class="acciones">
+          <button type="button" class="primario" id="procesar" disabled>Procesar bandeja</button>
+          <button type="button" class="secundario" id="muestras">Procesar F1, F2 y F3</button>
+        </div>
+      </section>
+
+      <section class="libro" aria-labelledby="titulo-libro" aria-live="polite">
+        <h2 id="titulo-libro">Resultado de la corrida</h2>
+        <p class="vacio" id="vacio">Todavía no hay facturas procesadas en esta sesión.</p>
+        <div id="resultados"></div>
+      </section>
+    </div>
+  </div>
+
+  <script>
+    const muestras = {{ muestras | tojson }};
+    const zona = document.getElementById("zona");
+    const input = document.getElementById("archivos");
+    const colaEl = document.getElementById("cola");
+    const btnProcesar = document.getElementById("procesar");
+    const btnMuestras = document.getElementById("muestras");
+    const resultados = document.getElementById("resultados");
+    const vacio = document.getElementById("vacio");
+    let cola = [];
+
+    const etiquetas = {
+      registrada: "Registrada",
+      ya_registrada: "Ya registrada",
+      rechazada: "Rechazada",
+      error: "Error técnico",
+      procesando: "Procesando",
+    };
+
+    function pintarCola() {
+      colaEl.innerHTML = cola.map((f) => `<li>${f.name}</li>`).join("");
+      btnProcesar.disabled = cola.length === 0;
+    }
+
+    function agregarArchivos(lista) {
+      for (const archivo of lista) {
+        if (!archivo.name.toLowerCase().endsWith(".pdf")) continue;
+        cola.push(archivo);
+      }
+      pintarCola();
+    }
+
+    zona.addEventListener("click", () => input.click());
+    zona.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); input.click(); }
+    });
+    input.addEventListener("change", () => {
+      agregarArchivos(input.files);
+      input.value = "";
+    });
+    zona.addEventListener("dragover", (e) => { e.preventDefault(); zona.classList.add("sobre"); });
+    zona.addEventListener("dragleave", () => zona.classList.remove("sobre"));
+    zona.addEventListener("drop", (e) => {
+      e.preventDefault();
+      zona.classList.remove("sobre");
+      agregarArchivos(e.dataTransfer.files);
+    });
+
+    function tarjeta(id, nombre) {
+      vacio.hidden = true;
+      const art = document.createElement("article");
+      art.className = "ficha procesando";
+      art.id = id;
+      art.innerHTML = `
+        <span class="sello procesando">${etiquetas.procesando}</span>
+        <h3>${nombre}</h3>
+        <p class="origen">Extrayendo y validando contra el ERP</p>`;
+      resultados.prepend(art);
+      return art;
+    }
+
+    function dinero(n) {
+      if (n === undefined || n === null || n === "") return "";
+      return Number(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+
+    function pintarResultado(art, data) {
+      const estado = data.estado || "error";
+      const d = data.datos || {};
+      art.className = "ficha " + estado;
+      const sello = etiquetas[estado] || estado;
+      const origen = data.origen === "texto"
+        ? "Extraído por texto (la IA no estuvo disponible)."
+        : data.origen === "ia"
+          ? "Extraído con el modelo de IA."
+          : "";
+      const motivos = (data.motivos || []).map((m) => `<li>${m}</li>`).join("");
+      art.innerHTML = `
+        <span class="sello ${estado}">${sello}</span>
+        <h3>${data.factura || "factura.pdf"} · ${data.numero || ""}</h3>
+        <dl class="datos">
+          <div><dt>RUC emisor</dt><dd>${data.ruc || d.ruc || ""}</dd></div>
+          <div><dt>Orden de compra</dt><dd>${d.orden_compra || ""}</dd></div>
+          <div><dt>Fecha</dt><dd>${d.fecha_emision || ""}</dd></div>
+          <div><dt>Total</dt><dd>${dinero(d.total)}</dd></div>
+        </dl>
+        ${motivos ? `<div class="motivos"><p>No se registró. Motivo para Compras:</p><ul>${motivos}</ul></div>` : ""}
+        ${data.detalle ? `<p class="detalle-error">${data.detalle}</p>` : ""}
+        ${origen ? `<p class="origen">${origen}${data.aviso ? " Se envió aviso por correo." : ""}</p>` : ""}
+      `;
+    }
+
+    async function pedir(url, opciones, nombre) {
+      const art = tarjeta("f-" + Date.now() + "-" + Math.random().toString(16).slice(2), nombre);
+      try {
+        const res = await fetch(url, opciones);
+        const data = await res.json();
+        if (data.error && !data.estado) {
+          pintarResultado(art, { factura: nombre, estado: "error", detalle: data.error });
+          return;
+        }
+        pintarResultado(art, data);
+      } catch (e) {
+        pintarResultado(art, { factura: nombre, estado: "error", detalle: String(e) });
+      }
+    }
+
+    btnProcesar.addEventListener("click", async () => {
+      const pendientes = cola.splice(0);
+      pintarCola();
+      btnProcesar.disabled = true;
+      btnMuestras.disabled = true;
+      for (const archivo of pendientes) {
+        const cuerpo = new FormData();
+        cuerpo.append("factura", archivo, archivo.name);
+        await pedir("/api/procesar", { method: "POST", body: cuerpo }, archivo.name);
+      }
+      btnMuestras.disabled = false;
+    });
+
+    btnMuestras.addEventListener("click", async () => {
+      btnProcesar.disabled = true;
+      btnMuestras.disabled = true;
+      for (const nombre of muestras) {
+        await pedir("/api/muestra/" + encodeURIComponent(nombre), { method: "POST" }, nombre);
+      }
+      btnMuestras.disabled = false;
+      pintarCola();
+    });
+  </script>
+</body>
+</html>

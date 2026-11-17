@@ -1,0 +1,460 @@
+{
+  "id": "recepcionFactXs1",
+  "name": "Recepcion automatizada de facturas (Diosmar)",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "formTitle": "Recepcion de facturas de proveedores",
+        "formDescription": "Sube el PDF de la factura. Se extraen los datos con IA, se validan contra el ERP y se registra o se avisa a Compras.",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Factura PDF",
+              "fieldType": "file",
+              "multipleFiles": false,
+              "acceptFileTypes": ".pdf",
+              "requiredField": true
+            }
+          ]
+        },
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "name": "1. Recibir PDF (formulario)",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.2,
+      "position": [
+        0,
+        300
+      ],
+      "webhookId": "recepcion-facturas-form"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst item = $input.first();\nconst claves = Object.keys(item.binary || {});\nif (!claves.length) throw new Error('No se recibio ningun PDF');\nreturn [{ json: { archivo: item.binary[claves[0]].fileName }, binary: { data: item.binary[claves[0]] } }];\n"
+      },
+      "name": "Normalizar archivo",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "pdf",
+        "binaryPropertyName": "data",
+        "options": {}
+      },
+      "name": "Leer texto del PDF",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        440,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\n// Config no secreta (los secretos viven en Credenciales de n8n)\nconst MODELO = 'claude-sonnet-4-6';\nreturn $input.all().map(item => {\n  const texto = item.json.text || '';\n  const prompt = 'Eres un extractor de datos de facturas electronicas ecuatorianas. ' +\n    'Del siguiente texto de una factura, devuelve SOLO un JSON valido (sin markdown, sin explicaciones) con estas claves exactas:\\n' +\n    '  \"ruc\": RUC del EMISOR (13 digitos, string),\\n' +\n    '  \"numero_factura\": formato ddd-ddd-ddddddddd (string),\\n' +\n    '  \"fecha_emision\": formato YYYY-MM-DD (string),\\n' +\n    '  \"orden_compra\": numero de la orden de compra (string),\\n' +\n    '  \"subtotal\": numero,\\n  \"iva\": numero,\\n  \"total\": numero.\\n' +\n    'El RUC es el del proveedor/emisor, NO el del comprador.\\n\\nTEXTO:\\n' + texto;\n  return { json: { claude: { model: MODELO, max_tokens: 1024, messages: [{ role: 'user', content: prompt }] } } };\n});\n"
+      },
+      "name": "Preparar prompt IA",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.claude) }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "name": "2. Extraer datos con Claude",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        300
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "anthropicXs00001",
+          "name": "Anthropic API key"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "jsCode": "\nlet crudo = ($json.content && $json.content[0] && $json.content[0].text) || '';\ncrudo = crudo.trim();\nconst i = crudo.indexOf('{'), f = crudo.lastIndexOf('}');\nif (i === -1 || f === -1) throw new Error('La IA no devolvio un JSON');\nconst d = JSON.parse(crudo.slice(i, f + 1));\nconst datos = {\n  ruc: String(d.ruc ?? '').trim(),\n  numero_factura: String(d.numero_factura ?? '').trim(),\n  fecha_emision: String(d.fecha_emision ?? '').trim(),\n  orden_compra: String(d.orden_compra ?? '').trim(),\n  subtotal: Number(d.subtotal),\n  iva: Number(d.iva),\n  total: Number(d.total),\n};\nreturn { json: datos };\n",
+        "mode": "runOnceForEachItem"
+      },
+      "name": "Parsear respuesta IA",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=http://192.168.15.113:8000/proveedores/{{ encodeURIComponent($json.ruc) }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 15000
+        }
+      },
+      "name": "ERP: consultar proveedor",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1320,
+        300
+      ],
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "erpBearerXs00001",
+          "name": "ERP Diosmar (Bearer)"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "url": "=http://192.168.15.113:8000/ordenes-compra/{{ encodeURIComponent($('Parsear respuesta IA').first().json.orden_compra || 'SIN-OC') }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 15000
+        }
+      },
+      "name": "ERP: consultar OC",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1540,
+        300
+      ],
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "erpBearerXs00001",
+          "name": "ERP Diosmar (Bearer)"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst datos = $('Parsear respuesta IA').first().json;\nconst prov = $('ERP: consultar proveedor').first().json;\nconst oc = $('ERP: consultar OC').first().json;\nconst errores = [];\n\nif (!/^\\d{13}$/.test(datos.ruc)) errores.push(`El RUC '${datos.ruc}' no tiene el formato valido de 13 digitos.`);\nif (!/^\\d{3}-\\d{3}-\\d{9}$/.test(datos.numero_factura)) errores.push(`El numero de factura '${datos.numero_factura}' no tiene el formato ddd-ddd-ddddddddd.`);\n\nif (prov.statusCode === 404) errores.push(`El proveedor con RUC ${datos.ruc} no esta registrado en el sistema.`);\nelse if (prov.statusCode >= 400) throw new Error(`Error tecnico consultando proveedor (HTTP ${prov.statusCode})`);\nelse if (String(prov.body.estado || '').toUpperCase() !== 'ACTIVO')\n  errores.push(`El proveedor ${prov.body.razon_social || datos.ruc} no esta activo (estado: ${prov.body.estado}).`);\n\nif (!datos.orden_compra) errores.push('La factura no indica orden de compra.');\nelse if (oc.statusCode === 404) errores.push(`La orden de compra ${datos.orden_compra} no existe en el sistema.`);\nelse if (oc.statusCode >= 400) throw new Error(`Error tecnico consultando OC (HTTP ${oc.statusCode})`);\nelse if (oc.body.ruc_proveedor && oc.body.ruc_proveedor !== datos.ruc)\n  errores.push(`La orden de compra ${datos.orden_compra} pertenece a otro proveedor (RUC ${oc.body.ruc_proveedor}), no al emisor de la factura.`);\n\nreturn { json: { ...datos, valida: errores.length === 0, errores, motivos_texto: errores.map(e => '  - ' + e).join('\\n') } };\n"
+      },
+      "name": "Validar reglas de negocio",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.valida }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "name": "¿Factura valida?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1980,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://192.168.15.113:8000/facturas",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ruc: $json.ruc, numero_factura: $json.numero_factura, fecha_emision: $json.fecha_emision, orden_compra: $json.orden_compra, subtotal: $json.subtotal, iva: $json.iva, total: $json.total}) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 15000
+        }
+      },
+      "name": "3a. Registrar en ERP",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2200,
+        180
+      ],
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "erpBearerXs00001",
+          "name": "ERP Diosmar (Bearer)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst r = $json;\nconst d = $('Validar reglas de negocio').first().json;\nif (r.statusCode === 409) return { json: { estado: 'ya_registrada', mensaje: `Factura ${d.numero_factura} ya estaba registrada (idempotencia, no se duplica).` } };\nif (r.statusCode >= 400) throw new Error(`Error tecnico registrando en ERP (HTTP ${r.statusCode}): ${JSON.stringify(r.body)}`);\nreturn { json: { estado: 'registrada', id: r.body.id, mensaje: `Factura ${d.numero_factura} REGISTRADA (id ${r.body.id}).` } };\n"
+      },
+      "name": "Resultado: registrada",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2420,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "fromEmail": "avisos-xavier@prueba.local",
+        "toEmail": "avisos-xavier@prueba.local",
+        "subject": "=Factura {{ $json.numero_factura }} NO registrada",
+        "emailFormat": "text",
+        "text": "=No se pudo registrar la siguiente factura:\n\n  Numero de factura: {{ $json.numero_factura }}\n  RUC del emisor: {{ $json.ruc }}\n\nMotivo(s):\n{{ $json.motivos_texto }}\n\nPor favor revisar con el area de Compras antes de reintentar.\n",
+        "options": {}
+      },
+      "name": "3b. Avisar a Compras (correo)",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        2200,
+        420
+      ],
+      "credentials": {
+        "smtp": {
+          "id": "smtpPruebaXs0001",
+          "name": "SMTP avisos"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst d = $('Validar reglas de negocio').first().json;\nreturn { json: { estado: 'rechazada', numero_factura: d.numero_factura, motivos: d.errores, mensaje: `Factura ${d.numero_factura} RECHAZADA. Aviso enviado a Compras.` } };\n"
+      },
+      "name": "Resultado: rechazada",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2420,
+        420
+      ]
+    }
+  ],
+  "connections": {
+    "1. Recibir PDF (formulario)": {
+      "main": [
+        [
+          {
+            "node": "Normalizar archivo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalizar archivo": {
+      "main": [
+        [
+          {
+            "node": "Leer texto del PDF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Leer texto del PDF": {
+      "main": [
+        [
+          {
+            "node": "Preparar prompt IA",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar prompt IA": {
+      "main": [
+        [
+          {
+            "node": "2. Extraer datos con Claude",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "2. Extraer datos con Claude": {
+      "main": [
+        [
+          {
+            "node": "Parsear respuesta IA",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parsear respuesta IA": {
+      "main": [
+        [
+          {
+            "node": "ERP: consultar proveedor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ERP: consultar proveedor": {
+      "main": [
+        [
+          {
+            "node": "ERP: consultar OC",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ERP: consultar OC": {
+      "main": [
+        [
+          {
+            "node": "Validar reglas de negocio",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validar reglas de negocio": {
+      "main": [
+        [
+          {
+            "node": "¿Factura valida?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Factura valida?": {
+      "main": [
+        [
+          {
+            "node": "3a. Registrar en ERP",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "3b. Avisar a Compras (correo)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "3a. Registrar en ERP": {
+      "main": [
+        [
+          {
+            "node": "Resultado: registrada",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "3b. Avisar a Compras (correo)": {
+      "main": [
+        [
+          {
+            "node": "Resultado: rechazada",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Guayaquil"
+  },
+  "pinData": {}
+}

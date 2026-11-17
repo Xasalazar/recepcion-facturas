@@ -9,14 +9,18 @@ correo de aviso** explicando por qué no se pudo registrar.
 1. **Lectura del PDF** → se extrae el texto.
 2. **Extracción con IA** (Claude Sonnet / Anthropic) → JSON con: RUC emisor, número de
    factura, fecha de emisión, orden de compra, subtotal, IVA y total.
+   - Si el modelo falla (sobrecarga, JSON inválido, datos incompletos) se usa **extracción
+     por texto** del PDF como respaldo.
 3. **Validaciones:**
    - Formato del RUC (13 dígitos) y del número (`ddd-ddd-ddddddddd`).
    - El **proveedor existe** y está **ACTIVO** (`GET /proveedores/{ruc}`).
    - La **orden de compra existe** (`GET /ordenes-compra/{numero}`) y **pertenece al RUC**.
 4. **Si todo es correcto** → registra la factura (`POST /facturas`).
    - Si ya estaba registrada (HTTP 409) se trata de forma **idempotente** (no duplica).
-5. **Si hay algún error** → **no registra** y **envía un correo** con número de factura,
-   RUC y el motivo explicado para el área de Compras.
+5. **Si hay un error de negocio** (proveedor inexistente/inactivo, OC ajena, formato) →
+   **no registra** y **envía un correo** a Compras.
+   - Un **error técnico** (ERP caído, timeout, HTTP 5xx) **no registra** y **no avisa** a
+     Compras: no es un problema de la factura.
 
 ## Requisitos
 
@@ -45,11 +49,28 @@ contraseñas) van en el `.env`, nunca en el código.**
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env   # y completar
+```
 
+### Bandeja web (presentación y pruebas extra)
+
+Abre una bandeja para **soltar PDF** y ver el resultado (registrada / rechazada / error) sin tocar código. Sirve para la corrida de F1–F3 y para las facturas adicionales que entregue el evaluador.
+
+```bash
+python web.py
+```
+
+Luego abre [http://127.0.0.1:5055](http://127.0.0.1:5055).
+
+- **Procesar F1, F2 y F3** usa los PDF de `facturas/`.
+- **Suelte los PDF aquí** acepta uno o varios archivos nuevos (pruebas adicionales).
+
+### Script (terminal)
+
+```bash
 python procesar.py facturas/F1.pdf facturas/F2.pdf facturas/F3.pdf
 ```
 
-Cada corrida imprime el detalle por factura y guarda un resumen en `salidas/`.
+Cada corrida de terminal imprime el detalle y guarda un resumen en `salidas/`. La bandeja web usa el mismo flujo (`procesar_factura`).
 
 ## Cómo cambiar el correo a producción
 
@@ -68,8 +89,26 @@ MAIL_TO=destinatario@dominio.com
 ## Notas de diseño (para el área TIC)
 
 - **Secretos fuera del código** (variables de entorno / `.env` en `.gitignore`).
+- **Configuración al arranque**: si faltan `ERP_BASE_URL`, `ERP_TOKEN`,
+  `ANTHROPIC_API_KEY` o `SMTP_HOST`, el script sale con un mensaje claro.
 - **Idempotencia** en el registro (HTTP 409 = ya registrada, no se duplica).
-- **Reintentos con backoff** ante sobrecarga temporal del modelo de IA.
-- **Trazabilidad**: cada corrida deja un resumen JSON con lo registrado/rechazado.
-- **Separación de responsabilidades**: lectura, extracción IA, validación, registro y
-  notificación son funciones independientes y fáciles de testear o reemplazar.
+- **Reintentos con backoff** ante sobrecarga temporal del modelo de IA; si el modelo no
+  responde, extracción por texto del PDF.
+- **Error técnico ≠ rechazo de negocio**: timeout/5xx del ERP no genera correo a Compras.
+- **Trazabilidad**: cada corrida deja un resumen JSON con lo registrado/rechazado/error.
+- **Separación de responsabilidades**: lectura, extracción IA, extracción por texto,
+  validación, registro y notificación son funciones independientes.
+
+## Versión n8n (visual)
+
+El mismo flujo existe en n8n: `n8n/recepcion-facturas.workflow.json` (lo genera `n8n/build_workflow.py`).
+
+1. Levantar n8n: `docker run -d --name n8n -p 5678:5678 -v n8n_data:/home/node/.n8n n8nio/n8n`
+2. Importar el workflow: menú **Import from file** en n8n, o `n8n import:workflow --input=...`.
+3. Crear las 3 credenciales en n8n (los secretos NO están en el JSON):
+   - **ERP Diosmar (Bearer)**: tipo *Bearer Auth*, token del ERP.
+   - **Anthropic API key**: tipo *Header Auth*, nombre `x-api-key`, valor la API key.
+   - **SMTP avisos**: tipo *SMTP* (buzón de prueba o el SMTP de producción).
+4. Activar y abrir el formulario: `http://localhost:5678/form/recepcion-facturas-form`, subir el PDF.
+
+Nodos: Formulario (PDF) → Leer texto → Claude (reintentos x5) → ERP proveedor → ERP OC → Validar reglas → ¿válida? → Registrar (409 = idempotente) / Correo a Compras.
