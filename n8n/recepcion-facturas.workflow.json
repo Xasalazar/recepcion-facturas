@@ -12,7 +12,7 @@
             {
               "fieldLabel": "Factura PDF",
               "fieldType": "file",
-              "multipleFiles": false,
+              "multipleFiles": true,
               "acceptFileTypes": ".pdf",
               "requiredField": true
             }
@@ -32,7 +32,7 @@
     },
     {
       "parameters": {
-        "jsCode": "\nconst item = $input.first();\nconst claves = Object.keys(item.binary || {});\nif (!claves.length) throw new Error('No se recibio ningun PDF');\nreturn [{ json: { archivo: item.binary[claves[0]].fileName }, binary: { data: item.binary[claves[0]] } }];\n"
+        "jsCode": "\n// Un item por cada PDF subido (el formulario acepta varios)\nconst salida = [];\nfor (const item of $input.all()) {\n  for (const clave of Object.keys(item.binary || {})) {\n    const b = item.binary[clave];\n    salida.push({ json: { archivo: b.fileName, recibido: $now.toISO() }, binary: { data: b } });\n  }\n}\nif (!salida.length) throw new Error('No se recibio ningun PDF');\nreturn salida;\n"
       },
       "name": "Normalizar archivo",
       "type": "n8n-nodes-base.code",
@@ -154,7 +154,7 @@
     },
     {
       "parameters": {
-        "url": "=http://192.168.15.113:8000/ordenes-compra/{{ encodeURIComponent($('Parsear respuesta IA').first().json.orden_compra || 'SIN-OC') }}",
+        "url": "=http://192.168.15.113:8000/ordenes-compra/{{ encodeURIComponent($('Parsear respuesta IA').item.json.orden_compra || 'SIN-OC') }}",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpBearerAuth",
         "options": {
@@ -186,7 +186,8 @@
     },
     {
       "parameters": {
-        "jsCode": "\nconst datos = $('Parsear respuesta IA').first().json;\nconst prov = $('ERP: consultar proveedor').first().json;\nconst oc = $('ERP: consultar OC').first().json;\nconst errores = [];\n\nif (!/^\\d{13}$/.test(datos.ruc)) errores.push(`El RUC '${datos.ruc}' no tiene el formato valido de 13 digitos.`);\nif (!/^\\d{3}-\\d{3}-\\d{9}$/.test(datos.numero_factura)) errores.push(`El numero de factura '${datos.numero_factura}' no tiene el formato ddd-ddd-ddddddddd.`);\n\nif (prov.statusCode === 404) errores.push(`El proveedor con RUC ${datos.ruc} no esta registrado en el sistema.`);\nelse if (prov.statusCode >= 400) throw new Error(`Error tecnico consultando proveedor (HTTP ${prov.statusCode})`);\nelse if (String(prov.body.estado || '').toUpperCase() !== 'ACTIVO')\n  errores.push(`El proveedor ${prov.body.razon_social || datos.ruc} no esta activo (estado: ${prov.body.estado}).`);\n\nif (!datos.orden_compra) errores.push('La factura no indica orden de compra.');\nelse if (oc.statusCode === 404) errores.push(`La orden de compra ${datos.orden_compra} no existe en el sistema.`);\nelse if (oc.statusCode >= 400) throw new Error(`Error tecnico consultando OC (HTTP ${oc.statusCode})`);\nelse if (oc.body.ruc_proveedor && oc.body.ruc_proveedor !== datos.ruc)\n  errores.push(`La orden de compra ${datos.orden_compra} pertenece a otro proveedor (RUC ${oc.body.ruc_proveedor}), no al emisor de la factura.`);\n\nreturn { json: { ...datos, valida: errores.length === 0, errores, motivos_texto: errores.map(e => '  - ' + e).join('\\n') } };\n"
+        "jsCode": "\nconst datos = $('Parsear respuesta IA').item.json;\nconst prov = $('ERP: consultar proveedor').item.json;\nconst oc = $('ERP: consultar OC').item.json;\nconst archivo = $('Normalizar archivo').item.json.archivo;\nconst errores = [];\n\nif (!/^\\d{13}$/.test(datos.ruc)) errores.push(`El RUC '${datos.ruc}' no tiene el formato valido de 13 digitos.`);\nif (!/^\\d{3}-\\d{3}-\\d{9}$/.test(datos.numero_factura)) errores.push(`El numero de factura '${datos.numero_factura}' no tiene el formato ddd-ddd-ddddddddd.`);\n\nif (prov.statusCode === 404) errores.push(`El proveedor con RUC ${datos.ruc} no esta registrado en el sistema.`);\nelse if (prov.statusCode >= 400) throw new Error(`Error tecnico consultando proveedor (HTTP ${prov.statusCode})`);\nelse if (String(prov.body.estado || '').toUpperCase() !== 'ACTIVO')\n  errores.push(`El proveedor ${prov.body.razon_social || datos.ruc} no esta activo (estado: ${prov.body.estado}).`);\n\nif (!datos.orden_compra) errores.push('La factura no indica orden de compra.');\nelse if (oc.statusCode === 404) errores.push(`La orden de compra ${datos.orden_compra} no existe en el sistema.`);\nelse if (oc.statusCode >= 400) throw new Error(`Error tecnico consultando OC (HTTP ${oc.statusCode})`);\nelse if (oc.body.ruc_proveedor && oc.body.ruc_proveedor !== datos.ruc)\n  errores.push(`La orden de compra ${datos.orden_compra} pertenece a otro proveedor (RUC ${oc.body.ruc_proveedor}), no al emisor de la factura.`);\n\nreturn { json: { archivo, ...datos, valida: errores.length === 0, errores, motivos_texto: errores.map(e => '  - ' + e).join('\\n') } };\n",
+        "mode": "runOnceForEachItem"
       },
       "name": "Validar reglas de negocio",
       "type": "n8n-nodes-base.code",
@@ -265,7 +266,8 @@
     },
     {
       "parameters": {
-        "jsCode": "\nconst r = $json;\nconst d = $('Validar reglas de negocio').first().json;\nif (r.statusCode === 409) return { json: { estado: 'ya_registrada', mensaje: `Factura ${d.numero_factura} ya estaba registrada (idempotencia, no se duplica).` } };\nif (r.statusCode >= 400) throw new Error(`Error tecnico registrando en ERP (HTTP ${r.statusCode}): ${JSON.stringify(r.body)}`);\nreturn { json: { estado: 'registrada', id: r.body.id, mensaje: `Factura ${d.numero_factura} REGISTRADA (id ${r.body.id}).` } };\n"
+        "jsCode": "\nconst r = $json;\nconst d = $('Validar reglas de negocio').item.json;\nconst base = { fecha: $now.toISO(), archivo: d.archivo, numero_factura: d.numero_factura, ruc: d.ruc, orden_compra: d.orden_compra, total: d.total, http_erp: r.statusCode };\nif (r.statusCode === 409) return { json: { ...base, estado: 'ya_registrada', mensaje: `Factura ${d.numero_factura} ya estaba registrada (idempotencia, no se duplica).` } };\nif (r.statusCode >= 400) throw new Error(`Error tecnico registrando en ERP (HTTP ${r.statusCode}): ${JSON.stringify(r.body)}`);\nreturn { json: { ...base, estado: 'registrada', id: r.body.id, mensaje: `Factura ${d.numero_factura} REGISTRADA (id ${r.body.id}).` } };\n",
+        "mode": "runOnceForEachItem"
       },
       "name": "Resultado: registrada",
       "type": "n8n-nodes-base.code",
@@ -300,7 +302,8 @@
     },
     {
       "parameters": {
-        "jsCode": "\nconst d = $('Validar reglas de negocio').first().json;\nreturn { json: { estado: 'rechazada', numero_factura: d.numero_factura, motivos: d.errores, mensaje: `Factura ${d.numero_factura} RECHAZADA. Aviso enviado a Compras.` } };\n"
+        "jsCode": "\nconst d = $('Validar reglas de negocio').item.json;\nreturn { json: { fecha: $now.toISO(), archivo: d.archivo, numero_factura: d.numero_factura, ruc: d.ruc, orden_compra: d.orden_compra, total: d.total, estado: 'rechazada', motivos: d.errores, aviso_enviado: true, mensaje: `Factura ${d.numero_factura} RECHAZADA. Aviso enviado a Compras.` } };\n",
+        "mode": "runOnceForEachItem"
       },
       "name": "Resultado: rechazada",
       "type": "n8n-nodes-base.code",
@@ -308,6 +311,35 @@
       "position": [
         2420,
         420
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\n// Una linea JSON por factura (trazabilidad / auditoria)\nconst lineas = $input.all().map(i => JSON.stringify(i.json)).join('\\n') + '\\n';\nconst resumen = $input.all().map(i => `${i.json.archivo}: ${i.json.estado}`).join(' | ');\nreturn [{ json: { resumen, facturas: $input.all().length },\n  binary: { data: { data: Buffer.from(lineas, 'utf8').toString('base64'), mimeType: 'application/x-ndjson', fileName: 'facturas.jsonl' } } }];\n"
+      },
+      "name": "4. Armar log",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2640,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "write",
+        "fileName": "={{ '/logs/facturas-' + $now.toFormat('yyyy-MM-dd') + '.jsonl' }}",
+        "dataPropertyName": "data",
+        "options": {
+          "append": true
+        }
+      },
+      "name": "5. Guardar log (JSONL)",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        2860,
+        300
       ]
     }
   ],
@@ -445,6 +477,39 @@
         [
           {
             "node": "Resultado: rechazada",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resultado: registrada": {
+      "main": [
+        [
+          {
+            "node": "4. Armar log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resultado: rechazada": {
+      "main": [
+        [
+          {
+            "node": "4. Armar log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "4. Armar log": {
+      "main": [
+        [
+          {
+            "node": "5. Guardar log (JSONL)",
             "type": "main",
             "index": 0
           }
