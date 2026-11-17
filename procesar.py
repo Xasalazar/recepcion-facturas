@@ -389,9 +389,13 @@ def enviar_aviso(numero: str, ruc: str, motivos: list):
     msg["To"] = MAIL_TO
     msg.set_content(cuerpo)
 
-    with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=15) as s:
+    if SMTP_PORT == 465:
+        cliente = smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=20)
+    else:
+        cliente = smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=20)
         if SMTP_TLS:
-            s.starttls()
+            cliente.starttls()
+    with cliente as s:
         if SMTP_USER:
             s.login(SMTP_USER, SMTP_PASS)
         s.send_message(msg)
